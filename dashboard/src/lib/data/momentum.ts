@@ -31,6 +31,16 @@ export interface MomentumData {
     by_agent: Record<string, number>;
     top_recent: Array<{ agent: string; title: string; pt: string }>;
   };
+  study_hours?: {
+    today_hours: number;
+    week_hours: number;
+    week_target: number;
+    week_pct: number;
+    streak_days: number;
+    zero_days_this_week: number;
+    last_study_at: string | null;
+    daily: Record<string, number>;
+  };
 }
 
 async function tryRefresh(): Promise<void> {
