@@ -1,6 +1,6 @@
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
-import { platform } from 'os';
+import { platform, homedir } from 'os';
 import type { AgentConfig, CtxEnv } from '../types/index.js';
 import { OutputBuffer } from './output-buffer.js';
 
@@ -193,7 +193,20 @@ export class AgentPTY {
    * Protected so HermesPTY can override to return 'hermes'.
    */
   protected getBinaryName(): string {
-    if (platform() !== 'win32') return 'claude';
+    if (platform() !== 'win32') {
+      // Probe well-known absolute install paths so PM2's stale PATH doesn't
+      // break agent spawns after a Claude Code auto-update (issue #342).
+      // ~/.local/bin/claude is a symlink the auto-updater keeps current.
+      const candidates = [
+        join(homedir(), '.local', 'bin', 'claude'),
+        '/usr/local/bin/claude',
+        '/opt/homebrew/bin/claude',
+      ];
+      for (const p of candidates) {
+        if (existsSync(p)) return p;
+      }
+      return 'claude'; // fallback — relies on PATH
+    }
     // The Claude Code Windows installer historically shipped a `claude.cmd`
     // shim alongside `claude.exe`. Newer installers (e.g. when claude lives
     // under `~/.local/bin`) ship only `claude.exe` and have no `.cmd` shim.
