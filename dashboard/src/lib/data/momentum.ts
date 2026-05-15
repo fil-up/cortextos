@@ -41,6 +41,20 @@ export interface MomentumData {
     last_study_at: string | null;
     daily: Record<string, number>;
   };
+  study_progress?: {
+    current_week: number;
+    phase: 'content' | 'practice';
+    total_hours_logged: number;
+    target_hours_to_date: number;
+    pace_pct: number;
+    by_topic: Record<string, {
+      label: string;
+      phase1_target_hours: number;
+      hours_logged: number;
+      sessions_completed: number;
+      status: 'not_started' | 'in_progress' | 'complete';
+    }>;
+  };
 }
 
 async function tryRefresh(): Promise<void> {

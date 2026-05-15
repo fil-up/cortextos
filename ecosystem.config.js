@@ -17,6 +17,7 @@ module.exports = {
         CTX_FRAMEWORK_ROOT: "/Users/phillipthomas/cortextos",
         CTX_PROJECT_ROOT: "/Users/phillipthomas/cortextos",
         CTX_ORG: process.env.CTX_ORG || "actuary-mon",
+        CTX_WHISPER_MODEL: process.env.CTX_WHISPER_MODEL || "/opt/homebrew/share/whisper-cpp/ggml-base.en.bin",
       },
       max_restarts: 50,
       restart_delay: 5000,

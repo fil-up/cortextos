@@ -10,7 +10,7 @@ import type { CronDefinition } from '../types/index.js';
 import { TelegramAPI } from '../telegram/api.js';
 import { TelegramPoller } from '../telegram/poller.js';
 import { resolvePaths } from '../utils/paths.js';
-import { resolveEnv } from '../utils/env.js';
+import { resolveEnv, parseEnvFile } from '../utils/env.js';
 import { recordInboundTelegram, cacheLastSent, logOutboundMessage, buildRecentHistory } from '../telegram/logging.js';
 import { collectTelegramCommands, registerTelegramCommands } from '../bus/metrics.js';
 import { stripControlChars } from '../utils/validate.js';
@@ -789,13 +789,15 @@ export class AgentManager {
       CTX_ORG: resolvedOrg,
       CTX_AGENT_DIR: agentDir,
     };
-    // Pull CHAT_ID from agent .env so send-telegram works
+    // Merge all agent .env vars so shell crons get credentials and custom config
+    // (e.g. CTX_WHISPER_MODEL, BOT_TOKEN). CTX_TELEGRAM_CHAT_ID is aliased from
+    // CHAT_ID for bus send-telegram compatibility. CTX_* vars set above win.
     if (agentDir) {
       const dotEnvPath = join(agentDir, '.env');
-      if (existsSync(dotEnvPath)) {
-        const content = readFileSync(dotEnvPath, 'utf-8');
-        const chatMatch = content.match(/^CHAT_ID=(.+)$/m);
-        if (chatMatch) env.CTX_TELEGRAM_CHAT_ID = chatMatch[1].trim();
+      const agentEnv = parseEnvFile(dotEnvPath);
+      if (agentEnv.CHAT_ID) env.CTX_TELEGRAM_CHAT_ID = agentEnv.CHAT_ID;
+      for (const [k, v] of Object.entries(agentEnv)) {
+        if (!(k in env)) env[k] = v;
       }
     }
     return env;
