@@ -32,6 +32,11 @@ export {
   type ExperimentConfig,
 } from './experiment.js';
 export {
+  writeSheet,
+  type WriteSheetOptions,
+  type WriteSheetResult,
+} from './sheets.js';
+export {
   browseCatalog,
   installCommunityItem,
   prepareSubmission,

@@ -19,6 +19,7 @@ import { addCron, removeCron, readCrons, updateCron as updateCronDef, getCronByN
 import { nextFireFromCron } from '../daemon/cron-scheduler.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
 import { checkUsageApi, refreshOAuthToken, rotateOAuth, loadAccounts, ALERT_5H, ALERT_7D } from '../bus/oauth.js';
+import { writeSheet } from '../bus/sheets.js';
 import { resolvePaths } from '../utils/paths.js';
 import { resolveEnv } from '../utils/env.js';
 import { IPCClient } from '../daemon/ipc-server.js';
@@ -2712,6 +2713,37 @@ busCommand
     if (!opts.dryRun && patched > 0) {
       console.log('\nRestart affected agents to apply the new settings:');
       console.log('  cortextos restart <agent-name>');
+    }
+  });
+
+busCommand
+  .command('write-sheet')
+  .description('Write cells to a Google Sheet via service account')
+  .requiredOption('--sheet-id <id>', 'Spreadsheet ID')
+  .requiredOption('--range <range>', 'A1 notation range, e.g. "Venues!B5"')
+  .requiredOption('--values <json>', 'JSON 2D array of cell values, e.g. \'[["val1","val2"]]\'')
+  .option('--service-account <path>', 'Path to service account JSON key (overrides GOOGLE_SERVICE_ACCOUNT_PATH)')
+  .action(async (opts: { sheetId: string; range: string; values: string; serviceAccount?: string }) => {
+    const serviceAccountPath = opts.serviceAccount ?? process.env.GOOGLE_SERVICE_ACCOUNT_PATH;
+    if (!serviceAccountPath) {
+      console.error('Error: GOOGLE_SERVICE_ACCOUNT_PATH not set and --service-account not provided');
+      process.exit(1);
+    }
+
+    let values: string[][];
+    try {
+      values = JSON.parse(opts.values) as string[][];
+    } catch {
+      console.error('Error: --values must be a valid JSON 2D array, e.g. \'[["val1","val2"]]\'');
+      process.exit(1);
+    }
+
+    try {
+      const result = await writeSheet({ spreadsheetId: opts.sheetId, range: opts.range, values, serviceAccountPath });
+      console.log(`Updated ${result.updatedCells} cell(s) at ${result.updatedRange}`);
+    } catch (err) {
+      console.error(`Error writing to sheet: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
   });
 
