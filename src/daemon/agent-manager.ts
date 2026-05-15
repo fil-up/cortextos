@@ -15,8 +15,6 @@ import { recordInboundTelegram, cacheLastSent, logOutboundMessage, buildRecentHi
 import { collectTelegramCommands, registerTelegramCommands } from '../bus/metrics.js';
 import { stripControlChars } from '../utils/validate.js';
 import { processMediaMessage } from '../telegram/media.js';
-import { OllamaExecutor } from './ollama-executor.js';
-import { ShellExecutor } from './shell-executor.js';
 
 type LogFn = (msg: string) => void;
 
@@ -35,17 +33,11 @@ export class AgentManager {
   private ctxRoot: string;
   private frameworkRoot: string;
   private org: string;
-  private ollamaExecutor: OllamaExecutor;
-  private shellExecutor: ShellExecutor;
-
   constructor(instanceId: string, ctxRoot: string, frameworkRoot: string, org: string) {
     this.instanceId = instanceId;
     this.ctxRoot = ctxRoot;
     this.frameworkRoot = frameworkRoot;
     this.org = org;
-    const daemonLogger = (msg: string) => console.log(`[daemon] ${msg}`);
-    this.ollamaExecutor = new OllamaExecutor({ logger: daemonLogger });
-    this.shellExecutor = new ShellExecutor({ logger: daemonLogger });
   }
 
   /**
@@ -888,15 +880,8 @@ export class AgentManager {
     const onFire = async (cron: CronDefinition): Promise<void> => {
       const engine = cron.engine ?? 'claude';
 
-      if (engine === 'ollama') {
-        const cronEnv = this.buildCronEnv(agentName);
-        await this.ollamaExecutor.execute(cron, agentName, cronEnv);
-        return;
-      }
-
-      if (engine === 'shell') {
-        const cronEnv = this.buildCronEnv(agentName);
-        await this.shellExecutor.execute(cron, agentName, cronEnv);
+      if (engine === 'ollama' || engine === 'shell') {
+        console.log(`[daemon] engine="${engine}" is no longer supported — skipping cron "${cron.name}" for agent "${agentName}"`);
         return;
       }
 
