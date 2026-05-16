@@ -18,6 +18,15 @@ orgs/
 # Secrets
 .env
 !.env.example
+# Belt-and-suspenders: explicit patterns catch secrets if moved outside orgs/
+secrets.env
+**/secrets.env
+**/.env
+# Private keys
+*.pem
+*.key
+*.p12
+*.pfx
 templates/*/.env
 .cortextos-env
 

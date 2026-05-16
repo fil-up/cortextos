@@ -19,7 +19,7 @@ import { addCron, removeCron, readCrons, updateCron as updateCronDef, getCronByN
 import { nextFireFromCron } from '../daemon/cron-scheduler.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
 import { checkUsageApi, refreshOAuthToken, rotateOAuth, loadAccounts, ALERT_5H, ALERT_7D } from '../bus/oauth.js';
-import { writeSheet } from '../bus/sheets.js';
+import { readSheet, writeSheet, writeSheetByVenueName } from '../bus/sheets.js';
 import { resolvePaths } from '../utils/paths.js';
 import { resolveEnv } from '../utils/env.js';
 import { IPCClient } from '../daemon/ipc-server.js';
@@ -2717,6 +2717,27 @@ busCommand
   });
 
 busCommand
+  .command('read-sheet')
+  .description('Read cells from a Google Sheet via service account')
+  .requiredOption('--sheet-id <id>', 'Spreadsheet ID')
+  .requiredOption('--range <range>', 'A1 notation range, e.g. "Venues!A:L"')
+  .option('--service-account <path>', 'Path to service account JSON key (overrides GOOGLE_SERVICE_ACCOUNT_PATH)')
+  .action(async (opts: { sheetId: string; range: string; serviceAccount?: string }) => {
+    const serviceAccountPath = opts.serviceAccount ?? process.env.GOOGLE_SERVICE_ACCOUNT_PATH;
+    if (!serviceAccountPath) {
+      console.error('Error: GOOGLE_SERVICE_ACCOUNT_PATH not set and --service-account not provided');
+      process.exit(1);
+    }
+    try {
+      const result = await readSheet({ spreadsheetId: opts.sheetId, range: opts.range, serviceAccountPath });
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(`Error reading sheet: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+busCommand
   .command('write-sheet')
   .description('Write cells to a Google Sheet via service account')
   .requiredOption('--sheet-id <id>', 'Spreadsheet ID')
@@ -2741,6 +2762,50 @@ busCommand
     try {
       const result = await writeSheet({ spreadsheetId: opts.sheetId, range: opts.range, values, serviceAccountPath });
       console.log(`Updated ${result.updatedCells} cell(s) at ${result.updatedRange}`);
+    } catch (err) {
+      console.error(`Error writing to sheet: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+busCommand
+  .command('write-sheet-by-venue')
+  .description('Write venue row cells by venue name (read-then-write row resolution)')
+  .requiredOption('--sheet-id <id>', 'Spreadsheet ID')
+  .requiredOption('--tab <name>', 'Sheet tab name, e.g. "Venues"')
+  .requiredOption('--venue <name>', 'Exact venue name to look up in column B')
+  .requiredOption('--updates <json>', 'JSON array of {col, value} objects, e.g. \'[{"col":"C","value":"LOCKED"}]\'')
+  .option('--venue-col <col>', 'Column letter containing venue names (default: B)', 'B')
+  .option('--service-account <path>', 'Path to service account JSON key (overrides GOOGLE_SERVICE_ACCOUNT_PATH)')
+  .action(async (opts: { sheetId: string; tab: string; venue: string; updates: string; venueCol: string; serviceAccount?: string }) => {
+    const serviceAccountPath = opts.serviceAccount ?? process.env.GOOGLE_SERVICE_ACCOUNT_PATH;
+    if (!serviceAccountPath) {
+      console.error('Error: GOOGLE_SERVICE_ACCOUNT_PATH not set and --service-account not provided');
+      process.exit(1);
+    }
+
+    let updates: Array<{ col: string; value: string }>;
+    try {
+      updates = JSON.parse(opts.updates) as Array<{ col: string; value: string }>;
+    } catch {
+      console.error('Error: --updates must be valid JSON, e.g. \'[{"col":"C","value":"LOCKED"}]\'');
+      process.exit(1);
+    }
+
+    try {
+      const result = await writeSheetByVenueName({
+        spreadsheetId: opts.sheetId,
+        tab: opts.tab,
+        venueName: opts.venue,
+        venueNameCol: opts.venueCol,
+        updates,
+        serviceAccountPath,
+      });
+      if (result.notFound) {
+        console.error(`Venue not found: "${opts.venue}"`);
+        process.exit(1);
+      }
+      console.log(`Updated ${result.updatedCells} cell(s) at row ${result.row}`);
     } catch (err) {
       console.error(`Error writing to sheet: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);

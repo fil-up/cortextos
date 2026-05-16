@@ -32,9 +32,16 @@ export {
   type ExperimentConfig,
 } from './experiment.js';
 export {
+  readSheet,
   writeSheet,
+  writeSheetByVenueName,
+  type ReadSheetOptions,
+  type ReadSheetResult,
   type WriteSheetOptions,
   type WriteSheetResult,
+  type VenueFieldUpdate,
+  type WriteSheetByVenueNameOptions,
+  type WriteSheetByVenueNameResult,
 } from './sheets.js';
 export {
   browseCatalog,
