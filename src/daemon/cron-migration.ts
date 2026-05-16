@@ -233,11 +233,6 @@ function convertEntry(
     enabled: true,
     created_at: new Date().toISOString(),
     metadata: { migrated_from_config: true, original_type: effectiveType },
-    // Preserve Ollama routing fields so they survive daemon restarts.
-    ...(entry.engine !== undefined && { engine: entry.engine }),
-    ...(entry.ollama_model !== undefined && { ollama_model: entry.ollama_model }),
-    ...(entry.context_commands !== undefined && { context_commands: entry.context_commands }),
-    ...(entry.system_prompt !== undefined && { system_prompt: entry.system_prompt }),
   };
 
   return { cron: def };
