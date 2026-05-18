@@ -47,7 +47,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
       [DIST_CLI, 'bus', 'upgrade-cron-teaching', ...args],
-      { env: { ...process.env, CTX_FRAMEWORK_ROOT: frameworkRoot, CTX_ROOT: frameworkRoot } },
+      { env: { ...process.env, CTX_FRAMEWORK_ROOT: frameworkRoot, CTX_ROOT: frameworkRoot, CTX_AGENT_DIR: undefined, CTX_PROJECT_ROOT: undefined } },
     );
     return { stdout, stderr, code: 0 };
   } catch (err) {
