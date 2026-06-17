@@ -249,7 +249,7 @@ export interface AgentConfig {
    * this many megabytes, forcing the next session to start fresh. Complements
    * the F15 compaction-loop archive (which is reactive); this is a proactive
    * size cap so an oversized transcript never re-loads into --continue.
-   * Default (absent) = 50. Set <= 0 to disable the size check.
+   * Default (absent) = 30. Set <= 0 to disable the size check.
    */
   max_transcript_mb?: number;
   /**
