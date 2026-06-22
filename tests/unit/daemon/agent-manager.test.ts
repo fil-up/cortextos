@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildReplyContext } from '../../../src/daemon/agent-manager.js';
@@ -24,7 +24,8 @@ vi.mock('../../../src/daemon/agent-process.js', () => ({
 // Mock FastChecker so it doesn't try to spawn anything either.
 vi.mock('../../../src/daemon/fast-checker.js', () => ({
   FastChecker: class {
-    start() { /* no-op */ }
+    // start() returns a promise: startAgent does `checker.start().catch(...)`.
+    async start() { /* no-op */ }
     stop() { /* no-op */ }
     wake() { /* no-op */ }
   },
@@ -284,6 +285,88 @@ describe('AgentManager.restartAgent - BUG-007 fix (rebuild Telegram poller)', ()
 
     expect(stopSpy).not.toHaveBeenCalled();
     expect(startSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentManager.startAgent - OS-scan-reap (BUG-011, batch item 1)', () => {
+  // Regression guard for the duplicate/orphan session accretion at its root
+  // (BUG-011). The in-memory registry + pendingRestarts Set only dedupe within
+  // one daemon process; an orphan `claude --` PTY that survived a daemon
+  // restart is invisible to them, so a fresh startAgent would spawn a SECOND
+  // live session for the same agent. The OS-scan-reap makes startAgent
+  // idempotent: before spawning it scans live `claude --` cwds (scanLiveSessionDirs)
+  // and ADOPTS/SKIPS when one already matches this agent's spawn dir.
+  //
+  // scanLiveSessionDirs() is mocked here so the test never touches real
+  // pgrep/lsof — it simulates "a live session already exists" vs "none exist".
+
+  let testDir: string;
+  let ctxRoot: string;
+  let frameworkRoot: string;
+  let agentDir: string;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'cortextos-am-osscan-'));
+    ctxRoot = join(testDir, 'instance');
+    frameworkRoot = join(testDir, 'framework');
+    mkdirSync(join(ctxRoot, 'config'), { recursive: true });
+    agentDir = join(frameworkRoot, 'orgs', 'acme', 'agents', 'alice');
+    mkdirSync(agentDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('does NOT spawn (adopts/skips) when a live session already exists for the agent', async () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    // Simulate the orphan-survived-restart case: the OS scan reports a live
+    // claude PTY whose cwd is this agent's spawn dir. Real scanLiveSessionDirs
+    // canonicalizes via realpath, so the mock does too (matches hasLiveOsSession).
+    vi.spyOn(am as any, 'scanLiveSessionDirs').mockReturnValue(new Set([realpathSync(agentDir)]));
+
+    await am.startAgent('alice', agentDir, { enabled: true } as any, 'acme');
+
+    // No AgentProcess was created/registered — the duplicate spawn was skipped.
+    expect((am as any).agents.has('alice')).toBe(false);
+    expect((am as any).cronSchedulers.has('alice')).toBe(false);
+  });
+
+  it('spawns normally when NO live session exists (scan returns empty)', async () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    // No pre-existing live session → the scan is empty → startAgent proceeds.
+    vi.spyOn(am as any, 'scanLiveSessionDirs').mockReturnValue(new Set<string>());
+
+    await am.startAgent('alice', agentDir, { enabled: true } as any, 'acme');
+
+    // The agent IS registered — a normal first start happened.
+    expect((am as any).agents.has('alice')).toBe(true);
+
+    // Cleanup any scheduler interval the start path may have created.
+    const sched = (am as any).cronSchedulers.get('alice');
+    if (sched && typeof sched.stop === 'function') sched.stop();
+  });
+
+  it('skips the duplicate even when the live cwd is a non-default working_directory', async () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    // Agent configured with an explicit working_directory (matches agent-pty's
+    // cwd resolution: working_directory || agentDir). The scan reports that dir.
+    const customCwd = join(testDir, 'custom-wd');
+    mkdirSync(customCwd, { recursive: true });
+    vi.spyOn(am as any, 'scanLiveSessionDirs').mockReturnValue(new Set([realpathSync(customCwd)]));
+
+    await am.startAgent(
+      'alice',
+      agentDir,
+      { enabled: true, working_directory: customCwd } as any,
+      'acme',
+    );
+
+    expect((am as any).agents.has('alice')).toBe(false);
   });
 });
 
