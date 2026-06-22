@@ -1,5 +1,7 @@
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync, realpathSync } from 'fs';
 import { join, relative } from 'path';
+import { execFileSync } from 'child_process';
+import { platform } from 'os';
 import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage } from '../types/index.js';
 import { AgentProcess } from './agent-process.js';
 import { WorkerProcess } from './worker-process.js';
@@ -107,6 +109,90 @@ export class AgentManager {
     // restart, manual restartAgent) get the real BUG-011 alarm, not the
     // quieted post-crash variant.
     this.daemonJustCrashed = false;
+  }
+
+  /**
+   * [BUG-011 / batch item 1] OS-scan for already-live agent PTYs.
+   *
+   * The in-memory registry (`this.agents`) + `pendingRestarts` Set only dedupe
+   * within a single daemon process. When the daemon restarts it loses both, but
+   * a previously-spawned `claude --` PTY for an agent can still be alive on the
+   * OS — so a fresh `startAgent` spawns a DUPLICATE, and these accrete into the
+   * orphan/duplicate-session incidents (root cause of BUG-011 accretion).
+   *
+   * This scan enumerates the working directories of every live `claude --`
+   * process via the same detection accretion-watch.sh uses (pgrep + lsof cwd),
+   * so `startAgent` can ADOPT/SKIP an agent that already has a live session
+   * instead of spawning a second one. Returns a Set of canonical (realpath)
+   * working directories.
+   *
+   * Best-effort and platform-guarded: pgrep/lsof are POSIX-only, so on Windows
+   * (or if the tools are missing / error) this returns an empty Set and
+   * startAgent behaves exactly as before — the scan only ever PREVENTS a
+   * duplicate spawn, never blocks a legitimate one.
+   *
+   * Separated from `hasLiveOsSession` so tests can mock the raw process scan.
+   */
+  protected scanLiveSessionDirs(): Set<string> {
+    const dirs = new Set<string>();
+    // pgrep/lsof are POSIX-only. On Windows, no-op (preserve prior behavior).
+    if (platform() === 'win32') return dirs;
+    let pids: string[] = [];
+    try {
+      const out = execFileSync('/usr/bin/pgrep', ['-f', 'claude --'], {
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
+      pids = out.split('\n').map((s) => s.trim()).filter(Boolean);
+    } catch {
+      // pgrep exits non-zero (=> throws) when there are zero matches — that is
+      // the normal "no live claude sessions" case. Also covers missing binary.
+      return dirs;
+    }
+    for (const pid of pids) {
+      try {
+        // lsof -a -p <pid> -d cwd -Fn => a line beginning with 'n' holding the cwd.
+        const out = execFileSync('/usr/sbin/lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], {
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        for (const line of out.split('\n')) {
+          if (line.startsWith('n')) {
+            const cwd = line.slice(1).trim();
+            if (cwd) dirs.add(this.canonicalize(cwd));
+          }
+        }
+      } catch {
+        // Process may have exited between pgrep and lsof, or lsof is missing —
+        // skip this pid (best-effort; a missed dir only risks one duplicate,
+        // which the next watchdog pass still catches).
+        continue;
+      }
+    }
+    return dirs;
+  }
+
+  /**
+   * Canonicalize a filesystem path for stable comparison (resolve symlinks).
+   * Falls back to the raw path when realpath fails (e.g. dir removed).
+   */
+  private canonicalize(p: string): string {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  }
+
+  /**
+   * [BUG-011 / batch item 1] True iff an agent already has a live `claude --`
+   * PTY whose working directory matches `spawnCwd`. Used by startAgent to make
+   * spawning idempotent against a pre-existing live session (e.g. an orphan
+   * that survived a daemon restart).
+   */
+  private hasLiveOsSession(spawnCwd: string): boolean {
+    const target = this.canonicalize(spawnCwd);
+    return this.scanLiveSessionDirs().has(target);
   }
 
   /**
@@ -317,6 +403,25 @@ export class AgentManager {
 
     if (!config) {
       config = this.loadAgentConfig(agentDir);
+    }
+
+    // [BUG-011 / batch item 1] OS-scan-reap: before spawning, check whether a
+    // live `claude --` PTY for this agent already exists on the OS (its cwd
+    // matches this agent's spawn working directory). The in-memory registry +
+    // pendingRestarts Set only dedupe within one daemon process; an orphan PTY
+    // that survived a daemon restart is invisible to them and would otherwise
+    // get a DUPLICATE spawn here — the source of session accretion. If a live
+    // session already exists, ADOPT/SKIP (do not spawn a second one). This
+    // makes startAgent idempotent against pre-existing live sessions. The scan
+    // is best-effort and POSIX-only; it can only ever prevent a duplicate
+    // spawn, never block a legitimate first start.
+    const spawnCwd = config.working_directory || agentDir;
+    if (this.hasLiveOsSession(spawnCwd)) {
+      console.warn(
+        `[agent-manager] OS-scan-reap: ${name} already has a live claude session ` +
+          `(cwd: ${spawnCwd}) — adopting existing session, skipping duplicate spawn (BUG-011).`,
+      );
+      return;
     }
 
     const env: CtxEnv = {
