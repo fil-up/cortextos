@@ -468,7 +468,14 @@ export function resyncCronsFromConfig(
   // Convert config entries; unconvertible ones (one-shots, schedule-less) are
   // simply absent from the owned set and so neither added nor used for removal.
   const configDefs = new Map<string, CronDefinition>();
+  // [batch item 9] Track EVERY name present in config.json's crons array — even
+  // unconvertible entries (e.g. an entry that transiently/erroneously lost its
+  // schedule). The removal path must only fire when a cron is GENUINELY GONE
+  // from config, never merely because it became unconvertible — otherwise a
+  // schedule-less config entry would silently drop a live, firing cron.
+  const configNames = new Set<string>();
   for (const entry of configCrons) {
+    if (entry && typeof entry.name === 'string') configNames.add(entry.name);
     const converted = convertEntry(entry, agentName);
     if ('cron' in converted) {
       configDefs.set(converted.cron.name, converted.cron);
@@ -492,13 +499,34 @@ export function resyncCronsFromConfig(
     }
     const cfg = configDefs.get(cur.name);
     if (!cfg) {
-      removed.push(cur.name); // deleted from config.json
+      // [batch item 9] Only REMOVE when the cron is genuinely gone from
+      // config.json. If the name is still present but unconvertible (lost its
+      // schedule), PRESERVE the live entry rather than dropping a firing cron —
+      // this is the schedule-null hazard, not an intentional deletion.
+      if (configNames.has(cur.name)) {
+        result.push(cur); // preserve — config entry exists but became unconvertible
+      } else {
+        removed.push(cur.name); // genuinely deleted from config.json
+      }
       continue;
     }
+    // [batch item 9] SCHEDULE-NULL regression guard: never overwrite a present,
+    // valid schedule with a null/empty one. The config-resync nulled live
+    // schedules non-deterministically on restart (moose 2026-06-21, ~67% hit
+    // rate on the SWL lane) — a nulled schedule silently stops the cron from
+    // firing. If the incoming config schedule is missing/empty but the live
+    // crons.json entry has a valid one, PRESERVE the live schedule. The same
+    // guard protects prompt (a falsy incoming prompt would orphan the cron).
+    const safeSchedule =
+      typeof cfg.schedule === 'string' && cfg.schedule.trim() !== ''
+        ? cfg.schedule
+        : cur.schedule;
+    const safePrompt =
+      typeof cfg.prompt === 'string' && cfg.prompt !== '' ? cfg.prompt : cur.prompt;
     const merged: CronDefinition = {
       ...cur,
-      schedule: cfg.schedule,
-      prompt: cfg.prompt,
+      schedule: safeSchedule,
+      prompt: safePrompt,
       description: cfg.description ?? cur.description,
       metadata: { ...cur.metadata, migrated_from_config: true },
     };
