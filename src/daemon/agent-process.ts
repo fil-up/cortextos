@@ -439,7 +439,7 @@ export class AgentProcess {
       return;
     }
 
-    const maxMb = this.config.max_transcript_mb ?? 50;
+    const maxMb = this.config.max_transcript_mb ?? 30;
     const maxAgeDays = this.config.max_transcript_age_days ?? 14;
 
     const launchDir = this.config.working_directory || this.env.agentDir;
