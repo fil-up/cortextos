@@ -587,6 +587,25 @@ export class AgentProcess {
   // --- Private methods ---
 
   /**
+   * Check whether this agent is still enabled in the instance-level
+   * enabled-agents.json. Called inside handleExit() before any restart to
+   * prevent disabled agents from respawning via crash-recovery or planned-
+   * restart paths (they should only start via agent-manager.startAgent()).
+   */
+  private isEnabled(): boolean {
+    // config.json `enabled: false` is authoritative
+    if (this.config.enabled === false) return false;
+    // instance-level enabled-agents.json
+    const enabledFile = join(this.env.ctxRoot, 'config', 'enabled-agents.json');
+    try {
+      const registry: Record<string, { enabled?: boolean }> = JSON.parse(readFileSync(enabledFile, 'utf-8'));
+      const entry = registry[this.name];
+      if (entry && entry.enabled === false) return false;
+    } catch { /* missing or corrupt — default enabled */ }
+    return true;
+  }
+
+  /**
    * Read the tail of this agent's stdout.log without loading the whole file.
    * Used by handleExit() to inspect recent output for known-crash signatures
    * (e.g. the image-poison API 400 pattern) so it can decide whether the
@@ -701,6 +720,12 @@ export class AgentProcess {
       try { unlinkSync(join(stateDir, '.restart-planned')); } catch { /* best-effort */ }
       try { unlinkSync(join(stateDir, '.session-refresh')); } catch { /* best-effort */ }
       this.appendCrashToRestartsLog(exitCode, 2000, 'PLANNED_RESTART');
+      if (!this.isEnabled()) {
+        this.log('Agent is disabled — skipping respawn after planned restart');
+        this.status = 'stopped';
+        this.notifyStatusChange();
+        return;
+      }
       this.status = 'crashed';
       this.notifyStatusChange();
       setTimeout(() => {
@@ -755,6 +780,12 @@ export class AgentProcess {
       this.log('Image-poison crash detected (API 400, unsupported image format). Arming .force-fresh and restarting without counting against max_crashes_per_day.');
       this.armForceFresh('image-poison auto-recovery');
       this.appendCrashToRestartsLog(exitCode, 5000, 'IMAGE_POISON_RECOVERY');
+      if (!this.isEnabled()) {
+        this.log('Agent is disabled — skipping respawn after image-poison recovery');
+        this.status = 'stopped';
+        this.notifyStatusChange();
+        return;
+      }
       this.status = 'crashed';
       this.notifyStatusChange();
       setTimeout(() => {
@@ -810,6 +841,12 @@ export class AgentProcess {
     // bus/system.ts wrote here, which left daemon-classified crashes
     // invisible outside the rotating PM2 daemon stdout log.
     this.appendCrashToRestartsLog(exitCode, backoff, 'CRASH');
+    if (!this.isEnabled()) {
+      this.log('Agent is disabled — skipping crash recovery restart');
+      this.status = 'stopped';
+      this.notifyStatusChange();
+      return;
+    }
     this.status = 'crashed';
     this.notifyStatusChange();
 
