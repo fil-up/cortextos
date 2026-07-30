@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import type { AgentInfo, AgentConfig, BusPaths } from '../types/index.js';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
@@ -66,6 +66,7 @@ export function listAgents(ctxRoot: string, org?: string): AgentInfo[] {
     }
 
     for (const orgName of orgDirs) {
+      try { if (!statSync(join(orgsDir, orgName)).isDirectory()) continue; } catch { continue; }
       if (org && orgName !== org) continue;
 
       const agentsDir = join(orgsDir, orgName, 'agents');
@@ -80,6 +81,7 @@ export function listAgents(ctxRoot: string, org?: string): AgentInfo[] {
 
       for (const agentName of agentDirs) {
         if (!/^[a-z0-9_-]+$/.test(agentName)) continue;
+        try { if (!statSync(join(agentsDir, agentName)).isDirectory()) continue; } catch { continue; }
         if (seen.has(agentName)) continue;
 
         seen.add(agentName);

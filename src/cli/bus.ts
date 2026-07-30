@@ -1374,11 +1374,12 @@ busCommand
   .option('--status <filter>', 'Filter by status: running|all', 'all')
   .option('--format <fmt>', 'Output format: json|text', 'json')
   .action(async (opts: { org?: string; status?: string; format?: string }) => {
-    const { existsSync, readdirSync, readFileSync } = require('fs');
+    const { existsSync, readdirSync, readFileSync, statSync } = require('fs');
     const { join } = require('path');
     const env = resolveEnv();
     const ctxRoot = require('path').join(require('os').homedir(), '.cortextos', env.instanceId);
     const frameworkRoot = env.frameworkRoot || process.cwd();
+    const AGENT_NAME_RE = /^[a-z0-9_-]+$/;
 
     // Collect agents from enabled-agents.json + filesystem scan
     const enabledFile = join(ctxRoot, 'config', 'enabled-agents.json');
@@ -1388,6 +1389,7 @@ busCommand
       try {
         const data = JSON.parse(readFileSync(enabledFile, 'utf-8'));
         for (const [name, cfg] of Object.entries(data as Record<string, any>)) {
+          if (!AGENT_NAME_RE.test(name)) continue;
           agentMap[name] = { org: cfg.org ?? '', enabled: cfg.enabled !== false };
         }
       } catch { /* skip corrupt */ }
@@ -1397,9 +1399,12 @@ busCommand
     const orgsDir = join(frameworkRoot, 'orgs');
     if (existsSync(orgsDir)) {
       for (const org of readdirSync(orgsDir)) {
+        try { if (!statSync(join(orgsDir, org)).isDirectory()) continue; } catch { continue; }
         const agentsDir = join(orgsDir, org, 'agents');
         if (!existsSync(agentsDir)) continue;
         for (const name of readdirSync(agentsDir)) {
+          if (!AGENT_NAME_RE.test(name)) continue;
+          try { if (!statSync(join(agentsDir, name)).isDirectory()) continue; } catch { continue; }
           if (!agentMap[name]) agentMap[name] = { org, enabled: true };
         }
       }

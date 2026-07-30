@@ -155,6 +155,25 @@ describe('Agent Discovery', () => {
       expect(agents.map(a => a.name).sort()).toEqual(['alice', 'bob']);
     });
 
+    // BUG-DS: .DS_Store and non-directory files must not appear as agents.
+    // Without the isDirectory() guard, a .DS_Store in orgs/<org>/agents/ is returned
+    // as an enabled agent with name ".DS_Store" — this test goes RED if the guard is removed.
+    it('skips .DS_Store and non-directory entries in agent dir scan', () => {
+      const frameworkRoot = join(testDir, 'framework');
+      process.env.CTX_FRAMEWORK_ROOT = frameworkRoot;
+
+      const agentsDir = join(frameworkRoot, 'orgs', 'pantheon', 'agents');
+      mkdirSync(join(agentsDir, 'inari'), { recursive: true });
+      writeFileSync(join(agentsDir, '.DS_Store'), 'macOS metadata');
+      writeFileSync(join(agentsDir, 'README.md'), '# agents');
+
+      const agents = listAgents(ctxRoot);
+      const names = agents.map(a => a.name);
+      expect(names).toContain('inari');
+      expect(names).not.toContain('.DS_Store');
+      expect(names).not.toContain('README.md');
+    });
+
     it('respects enabled: false from enabled-agents.json for agents found in dir scan', () => {
       // Set up: dir for alice + entry in enabled-agents.json saying enabled: false.
       // listAgents should return alice with enabled: false (not skip her entirely).
