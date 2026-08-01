@@ -68,6 +68,50 @@ If no collections appear, the KB may not be configured yet — check that `GEMIN
 
 ---
 
+## Purging Stale / Poisoned Vectors
+
+`cortextos bus kb-ingest --force` appends new chunks — it does NOT evict old ones. After replacing a source doc (e.g. HTML page superseded by a markdown file), verify the query returns the new source before declaring success.
+
+If stale chunks persist, purge directly via ChromaDB Python client:
+
+```python
+# Find the ChromaDB path for your org:
+# ~/.cortextos/default/orgs/<ORG>/knowledge-base/chromadb
+
+/Users/phillipthomas/cortextos/knowledge-base/venv/bin/python3 << 'PYEOF'
+import chromadb
+
+client = chromadb.PersistentClient(
+    path="/Users/phillipthomas/.cortextos/default/orgs/<ORG>/knowledge-base/chromadb"
+)
+col = client.get_collection("shared-<ORG>")
+
+# Find IDs by source path
+results = col.get(where={"source": {"$eq": "/path/to/stale-file.html"}})
+print(f"Found {len(results['ids'])} chunks to delete")
+
+# Delete them
+col.delete(ids=results["ids"])
+print("Deleted")
+PYEOF
+```
+
+Then re-ingest the correct source and verify by query:
+
+```bash
+cortextos bus kb-ingest /path/to/fresh-file.md --org $CTX_ORG --scope shared --force
+cortextos bus kb-query "the topic you fixed" --org $CTX_ORG | head -20
+# Confirm: top results all from fresh source, zero traces of old file
+```
+
+**Notes:**
+- `mmrag.py delete` may fail if config not found — fall back to raw chromadb client above
+- `cortextos bus` has no kb-delete command (as of Jul 29 2026)
+- Always verify by query result, not ingest exit code
+- Incident ref: SWL Rule 3.03 KB poison Jul 24-29 2026, fixed by silver → [[silver]]
+
+---
+
 ## Workflow Pattern
 
 ```
