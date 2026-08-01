@@ -14,7 +14,7 @@ import { browseCatalog, installCommunityItem, prepareSubmission, submitCommunity
 import { collectMetrics, parseUsageOutput, storeUsageData, checkUpstream, collectTelegramCommands, registerTelegramCommands } from '../bus/metrics.js';
 import { createApproval, updateApproval } from '../bus/approval.js';
 import { createReminder, listReminders, ackReminder, pruneReminders } from '../bus/reminders.js';
-import { updateCronFire, parseDurationMs, readCronState } from '../bus/cron-state.js';
+import { updateCronFire, parseDurationMs, cronExpressionMinIntervalMs, readCronState } from '../bus/cron-state.js';
 import { addCron, removeCron, readCrons, updateCron as updateCronDef, getCronByName, getExecutionLog } from '../bus/crons.js';
 import { nextFireFromCron } from '../daemon/cron-scheduler.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
@@ -499,11 +499,42 @@ busCommand
       return;
     }
 
+    // Load enabled-agents.json once for the whole listing.
+    const enabledFile = join(paths.ctxRoot, 'config', 'enabled-agents.json');
+    let enabledMap: Record<string, { enabled?: boolean }> = {};
+    if (existsSync(enabledFile)) {
+      try { enabledMap = JSON.parse(readFileSync(enabledFile, 'utf-8')); } catch { /* ignore */ }
+    }
+
+    const now = Date.now();
+    const DEFAULT_STALE_MS = 8 * 60 * 60 * 1000;
+
     for (const hb of heartbeats) {
-      const stale = new Date(hb.last_heartbeat) < new Date(Date.now() - 2 * 60 * 60 * 1000);
-      const staleFlag = stale ? ' [STALE]' : '';
-      const label = hb.display_name ? `${hb.display_name} (${hb.agent})` : hb.agent;
-      console.log(`${label} (${hb.org}) — ${hb.status}${staleFlag} — last seen ${hb.last_heartbeat}`);
+      const agentName = hb.agent;
+      const isDisabled = enabledMap[agentName]?.enabled === false;
+
+      let statusFlag = '';
+      if (isDisabled) {
+        statusFlag = ' [DISABLED]';
+      } else {
+        // Per-agent stale threshold: read heartbeat cron schedule from crons.json.
+        let staleThresholdMs = DEFAULT_STALE_MS;
+        const crons = readCrons(agentName, paths.ctxRoot);
+        const hbCron = crons.find(c => c.name === 'heartbeat');
+        if (hbCron) {
+          const durMs = parseDurationMs(hbCron.schedule);
+          const exprMs = isNaN(durMs) ? cronExpressionMinIntervalMs(hbCron.schedule) : durMs;
+          if (isFinite(exprMs) && exprMs > 0) {
+            // ponytail: 2.5× gives one missed fire before STALE; round to ms
+            staleThresholdMs = Math.round(exprMs * 2.5);
+          }
+        }
+        const stale = new Date(hb.last_heartbeat) < new Date(now - staleThresholdMs);
+        if (stale) statusFlag = ' [STALE]';
+      }
+
+      const label = hb.display_name ? `${hb.display_name} (${agentName})` : agentName;
+      console.log(`${label} (${hb.org}) — ${hb.status}${statusFlag} — last seen ${hb.last_heartbeat}`);
       if (hb.current_task) console.log(`  task: ${hb.current_task}`);
     }
   });
