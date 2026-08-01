@@ -165,8 +165,9 @@ Full reference: `.claude/skills/knowledge-base/SKILL.md`
 Keep your memory collection searchable and current:
 
 ```bash
-cortextos bus kb-ingest ./MEMORY.md ./memory/$(date -u +%Y-%m-%d).md \
-  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --collection memory-$CTX_AGENT_NAME --force
+AGENT_DIR="$CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/agents/$CTX_AGENT_NAME"
+cortextos bus kb-ingest "$AGENT_DIR/MEMORY.md" "$AGENT_DIR/memory/$(date -u +%Y-%m-%d).md" \
+  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --force
 ```
 
 This runs automatically on every heartbeat cycle. It ensures past experiences, user preferences, and learned patterns are semantically searchable for future tasks. Skip if GEMINI_API_KEY is not configured.

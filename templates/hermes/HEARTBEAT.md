@@ -66,8 +66,9 @@ MEMORY
 ## Step 6: Re-index memory to KB
 
 ```bash
-cortextos bus kb-ingest ./MEMORY.md ./memory/$(date -u +%Y-%m-%d).md \
-  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --collection memory-$CTX_AGENT_NAME --force
+AGENT_DIR="$CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/agents/$CTX_AGENT_NAME"
+cortextos bus kb-ingest "$AGENT_DIR/MEMORY.md" "$AGENT_DIR/memory/$(date -u +%Y-%m-%d).md" \
+  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --force
 ```
 
 ## Step 7: Check GOALS.md

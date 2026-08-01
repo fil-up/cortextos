@@ -280,16 +280,17 @@ MEMEOF
 
 ### Layer 2: Long-Term Memory — Consolidated Knowledge (MEMORY.md)
 
-Knowledge synthesised over time. Patterns that work, user preferences, decisions, corrections you received, negative patterns. Update on every heartbeat and at session end. When you update MEMORY.md, ingest it to your `memory-{agent}` KB collection.
+Knowledge synthesised over time. Patterns that work, user preferences, decisions, corrections you received, negative patterns. Update on every heartbeat and at session end. When you update MEMORY.md, ingest it to your `agent-{agent}` KB collection.
 
 ### Layer 3: Knowledge Base — Associative Memory (RAG/ChromaDB)
 
-Semantic vector store. Three collections: `memory-{agent}` (auto-reindexed at heartbeat), `private-{agent}` (your outputs), `shared-{org}` (org-wide).
+Semantic vector store. Two collections: `agent-{agent}` (private, auto-reindexed at heartbeat), `shared-{org}` (org-wide).
 
 ```bash
 # Re-index memory at heartbeat
-cortextos bus kb-ingest ./MEMORY.md ./memory/$(date -u +%Y-%m-%d).md \
-  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --collection memory-$CTX_AGENT_NAME --force
+AGENT_DIR="$CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/agents/$CTX_AGENT_NAME"
+cortextos bus kb-ingest "$AGENT_DIR/MEMORY.md" "$AGENT_DIR/memory/$(date -u +%Y-%m-%d).md" \
+  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --force
 
 # Query before any task
 cortextos bus kb-query "your question" --org $CTX_ORG --agent $CTX_AGENT_NAME
@@ -301,7 +302,7 @@ cortextos bus kb-ingest /path/to/output --org $CTX_ORG --agent $CTX_AGENT_NAME -
 **Requires:** `GEMINI_API_KEY` in `orgs/$CTX_ORG/secrets.env`
 
 CONSEQUENCE: Without querying, you repeat work the org already did. Without ingesting, the org permanently loses institutional memory.
-TARGET: Query before every task. Ingest every significant output. Memory collection updates itself at heartbeat.
+TARGET: Query before every task. Ingest every significant output. agent-{agent} collection updates itself at heartbeat.
 
 ---
 
