@@ -222,6 +222,7 @@ export function queryKnowledgeBase(
       allResults = allResults.concat(parseOutput(output));
       lastCollection = col;
     }
+    allResults.sort((a, b) => b.score - a.score);
 
     if (allResults.length > 0) {
       return {
