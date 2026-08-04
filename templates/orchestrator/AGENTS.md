@@ -52,7 +52,7 @@ Complete the following in order. Do not skip steps.
     Twin-boot gate — same pattern as step 1, separate marker. Run the gate; send inside the `else` branch only:
     ```bash
     ONLINE_LOCK="$CTX_ROOT/state/$CTX_AGENT_NAME/.boot-online"
-    if [ -n "$(find "$ONLINE_LOCK" -mmin -2 2>/dev/null)" ]; then
+    if [ -n "$(find "$ONLINE_LOCK" -mmin -10 2>/dev/null)" ]; then
       cortextos bus log-event action boot_ping_suppressed info --meta '{"agent":"'$CTX_AGENT_NAME'","site":"online_status"}'
       # Twin already greeted them. Stay silent — do NOT retry.
     else
