@@ -174,7 +174,7 @@ export class AgentProcess {
         return;
       }
       this.log(`Exited with code ${exitCode} signal ${signal}`);
-      this.handleExit(exitCode);
+      this.handleExit(exitCode, signal);
       // Signal anyone awaiting this PTY's exit (e.g. stop() — BUG-011 fix)
       this.resolveExit?.();
       this.resolveExit = null;
@@ -673,7 +673,7 @@ export class AgentProcess {
     }
   }
 
-  private handleExit(exitCode: number): void {
+  private handleExit(exitCode: number, signal?: number): void {
     // Capture last 16KB of the agent's stdout BEFORE nulling pty.
     // Used by the image-poison auto-recovery check below — reads the log
     // file so this works even if the PTY buffer has already been GC'd.
@@ -719,7 +719,7 @@ export class AgentProcess {
       const stateDir = join(this.env.ctxRoot, 'state', this.name);
       try { unlinkSync(join(stateDir, '.restart-planned')); } catch { /* best-effort */ }
       try { unlinkSync(join(stateDir, '.session-refresh')); } catch { /* best-effort */ }
-      this.appendCrashToRestartsLog(exitCode, 2000, 'PLANNED_RESTART');
+      this.appendCrashToRestartsLog(exitCode, signal, 2000, 'PLANNED_RESTART');
       if (!this.isEnabled()) {
         this.log('Agent is disabled — skipping respawn after planned restart');
         this.status = 'stopped';
@@ -779,7 +779,7 @@ export class AgentProcess {
     if (exitCode === 0 && this.detectImagePoisonCrash(recentOutput)) {
       this.log('Image-poison crash detected (API 400, unsupported image format). Arming .force-fresh and restarting without counting against max_crashes_per_day.');
       this.armForceFresh('image-poison auto-recovery');
-      this.appendCrashToRestartsLog(exitCode, 5000, 'IMAGE_POISON_RECOVERY');
+      this.appendCrashToRestartsLog(exitCode, signal, 5000, 'IMAGE_POISON_RECOVERY');
       if (!this.isEnabled()) {
         this.log('Agent is disabled — skipping respawn after image-poison recovery');
         this.status = 'stopped';
@@ -812,7 +812,7 @@ export class AgentProcess {
         this.log(
           `CRASH_LOOP: ${this.crashTimestamps.length} crashes in ${this.crashWindowMs / 1000}s window — auto-pausing`,
         );
-        this.appendCrashToRestartsLog(exitCode, 0, 'CRASH_LOOP');
+        this.appendCrashToRestartsLog(exitCode, signal, 0, 'CRASH_LOOP');
         this.status = 'halted';
         this.notifyStatusChange();
         return;
@@ -827,7 +827,7 @@ export class AgentProcess {
 
     if (this.crashCount >= this.maxCrashesPerDay) {
       this.log(`HALTED: exceeded ${this.maxCrashesPerDay} crashes today`);
-      this.appendCrashToRestartsLog(exitCode, 0, 'HALTED');
+      this.appendCrashToRestartsLog(exitCode, signal, 0, 'HALTED');
       this.status = 'halted';
       this.notifyStatusChange();
       return;
@@ -840,7 +840,7 @@ export class AgentProcess {
     // trail. Previously only planned SELF-RESTART / HARD-RESTART from
     // bus/system.ts wrote here, which left daemon-classified crashes
     // invisible outside the rotating PM2 daemon stdout log.
-    this.appendCrashToRestartsLog(exitCode, backoff, 'CRASH');
+    this.appendCrashToRestartsLog(exitCode, signal, backoff, 'CRASH');
     if (!this.isEnabled()) {
       this.log('Agent is disabled — skipping crash recovery restart');
       this.status = 'stopped';
@@ -1305,6 +1305,7 @@ export class AgentProcess {
    */
   private appendCrashToRestartsLog(
     exitCode: number,
+    signal: number | undefined,
     backoffMs: number,
     kind: 'CRASH' | 'HALTED' | 'CRASH_LOOP' | 'IMAGE_POISON_RECOVERY' | 'PLANNED_RESTART',
   ): void {
@@ -1312,14 +1313,15 @@ export class AgentProcess {
       const logDir = join(this.env.ctxRoot, 'logs', this.name);
       ensureDir(logDir);
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      const signalSuffix = signal ? ` signal=${signal}` : '';
       const details =
         kind === 'HALTED'
-          ? `exit_code=${exitCode} crash_count=${this.crashCount} max_crashes=${this.maxCrashesPerDay}`
+          ? `exit_code=${exitCode}${signalSuffix} crash_count=${this.crashCount} max_crashes=${this.maxCrashesPerDay}`
           : kind === 'IMAGE_POISON_RECOVERY'
-            ? `exit_code=${exitCode} backoff_s=${backoffMs / 1000} (not counted toward max_crashes)`
+            ? `exit_code=${exitCode}${signalSuffix} backoff_s=${backoffMs / 1000} (not counted toward max_crashes)`
             : kind === 'PLANNED_RESTART'
-              ? `exit_code=${exitCode} backoff_s=${backoffMs / 1000} (intentional restart, not counted toward max_crashes)`
-              : `exit_code=${exitCode} crash_count=${this.crashCount} backoff_s=${backoffMs / 1000}`;
+              ? `exit_code=${exitCode}${signalSuffix} backoff_s=${backoffMs / 1000} (intentional restart, not counted toward max_crashes)`
+              : `exit_code=${exitCode}${signalSuffix} crash_count=${this.crashCount} backoff_s=${backoffMs / 1000}`;
       const logLine = `[${timestamp}] ${kind}: ${details}\n`;
       appendFileSync(join(logDir, 'restarts.log'), logLine, 'utf-8');
     } catch {
