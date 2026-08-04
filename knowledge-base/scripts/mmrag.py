@@ -1221,6 +1221,11 @@ def cmd_query(args):
                     "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
                 })
 
+    # Drop ghost entries — embeddings whose HNSW vector exists but metadata was deleted
+    # (e.g. after a raw SQLite purge that left vector index intact). Chroma returns
+    # None for both document and metadata in these cases.
+    filtered = [r for r in filtered if r["content"] is not None]
+
     # Deduplicate near-identical results (same file in multiple lesson folders)
     filtered = deduplicate_results(filtered)
 
