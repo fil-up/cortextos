@@ -222,6 +222,9 @@ export function queryKnowledgeBase(
       allResults = allResults.concat(parseOutput(output));
       lastCollection = col;
     }
+    // ponytail: sort fixes ordering; selection is still per-collection top-k, so a collection's
+    // (k+1)th result can never surface even if it outranks another collection's kth.
+    allResults.sort((a, b) => b.score - a.score);
 
     if (allResults.length > 0) {
       return {
