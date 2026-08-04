@@ -23,7 +23,17 @@ Complete the following in order. Do not skip steps.
 
 1. **Send boot message first** — before reading anything else. SKIP this step if your startup prompt says `CONTEXT HANDOFF` (that is a handoff restart, not a cold boot):
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Booting up... one moment"
+   # Twin-boot gate (BUG-A, 2026-07-31): double-spawn runs this twice ~16s apart.
+   # Suppress only when the message IS the work (boot ping). NEVER gate messages that
+   # REPORT work. 2-min mtime window: twins boot in lockstep; a legit restart hours
+   # later finds a stale marker and sends normally.
+   BOOT_LOCK="$CTX_ROOT/state/$CTX_AGENT_NAME/.boot-ping"
+   if [ -n "$(find "$BOOT_LOCK" -mmin -2 2>/dev/null)" ]; then
+     cortextos bus log-event action boot_ping_suppressed info --meta '{"agent":"'$CTX_AGENT_NAME'","site":"boot_ping"}'
+   else
+     touch "$BOOT_LOCK"
+     cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Booting up... one moment"
+   fi
    ```
 2. Read all bootstrap files: IDENTITY.md, SOUL.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md, MEMORY.md, USER.md, TOOLS.md, SYSTEM.md
    - TOOLS.md is a compact command index — load the relevant skill (e.g. `tasks/SKILL.md`, `comms/SKILL.md`) when you need full docs for a workflow
@@ -38,6 +48,18 @@ Complete the following in order. Do not skip steps.
 11. Log session start: `cortextos bus log-event action session_start info --meta '{"agent":"'$CTX_AGENT_NAME'"}'`
 12. Write session start entry to daily memory (see Memory Protocol below)
 13. Send your online status message. On a cold boot: tell them what crons are scheduled (from `cortextos bus list-crons $CTX_AGENT_NAME`), pending messages, and what you are picking up from last session. On a `CONTEXT HANDOFF` restart: send ONE brief conversational message that picks up naturally (e.g. "back — [what you were working on]"). No cron IDs, no status report.
+
+    Twin-boot gate — same pattern as step 1, separate marker. Run the gate; send inside the `else` branch only:
+    ```bash
+    ONLINE_LOCK="$CTX_ROOT/state/$CTX_AGENT_NAME/.boot-online"
+    if [ -n "$(find "$ONLINE_LOCK" -mmin -10 2>/dev/null)" ]; then
+      cortextos bus log-event action boot_ping_suppressed info --meta '{"agent":"'$CTX_AGENT_NAME'","site":"online_status"}'
+      # Twin already greeted them. Stay silent — do NOT retry.
+    else
+      touch "$ONLINE_LOCK"
+      cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "<your online status message>"
+    fi
+    ```
 
 ---
 
