@@ -211,4 +211,6 @@ if skipped_names:
 
 if orphan_msg:
     print(orphan_msg)
+elif running_status == "cli-unavailable":
+    print(f"  orphan check SKIPPED (cortextos status unavailable)")
 PYEOF
