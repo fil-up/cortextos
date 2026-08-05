@@ -43,8 +43,20 @@ HEARTBEAT="${CTX_ROOT:-$HOME/.cortextos/default}/state/$AGENT/heartbeat.json"
 
 # Agents are Claude sessions spawned by the daemon, never pm2 apps.
 # cortextos status is the authoritative running-state source.
-RUNNING_STATUS=$(cortextos status 2>/dev/null | awk -v a="$AGENT" '$1==a{print $2}')
-[ -z "$RUNNING_STATUS" ] && RUNNING_STATUS="unknown"
+# Distinguish CLI failure from a genuinely absent agent: if the CLI fails
+# or returns no status rows at all, skip the orphan check (cli-unavailable)
+# rather than treating every agent as absent. Empty listing != absent agent
+# (brew llhttp outage kills CLI while daemon + agents stay up — without this
+# guard, all agents with fresh heartbeats would flood false ORPHAN alerts).
+_STATUS_OUT=$(cortextos status 2>/dev/null)
+_STATUS_EXIT=$?
+if [ $_STATUS_EXIT -ne 0 ] || ! echo "$_STATUS_OUT" | grep -qE 'running|stopped'; then
+    RUNNING_STATUS="cli-unavailable"
+else
+    RUNNING_STATUS=$(echo "$_STATUS_OUT" | awk -v a="$AGENT" '$1==a{print $2}')
+    [ -z "$RUNNING_STATUS" ] && RUNNING_STATUS="unknown"
+fi
+unset _STATUS_OUT _STATUS_EXIT
 
 python3 - "$CRONS" "$HEARTBEAT" "$RUNNING_STATUS" "$AGENT" << 'PYEOF'
 import sys, json, re
@@ -172,7 +184,9 @@ try:
     hb = json.load(open(hb_path))
     hb_ts = datetime.fromisoformat(hb["last_heartbeat"].replace("Z", "+00:00"))
     hb_age = (now - hb_ts).total_seconds()
-    if running_status != "running" and hb_age < 1200:  # 20 min
+    # cli-unavailable = cortextos status failed or returned no rows (CLI outage,
+    # not agent absence). Skip rather than false-flag every running agent.
+    if running_status not in ("running", "cli-unavailable") and hb_age < 1200:
         age_m = int(hb_age // 60)
         orphan_msg = (f"ORPHAN: {agent_name} heartbeat {age_m}m old but "
                       f"daemon status={running_status!r} — session untracked, "
