@@ -34,24 +34,19 @@
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 AGENT="${1:-$CTX_AGENT_NAME}"
-CTX_STATE="${CTX_ROOT:-$HOME/.cortextos/default}/.cortextOS/state/agents"
-CRONS="$CTX_STATE/$AGENT/crons.json"
-HEARTBEAT="$CTX_STATE/$AGENT/heartbeat.json"
+CRONS_DIR="${CTX_ROOT:-$HOME/.cortextos/default}/.cortextOS/state/agents"
+CRONS="$CRONS_DIR/$AGENT/crons.json"
+# heartbeat lives in a different subtree than crons.json
+HEARTBEAT="${CTX_ROOT:-$HOME/.cortextos/default}/state/$AGENT/heartbeat.json"
 
 [ -f "$CRONS" ] || { echo "F19 GUARD: no crons.json for $AGENT"; exit 0; }
 
-# Probe pm2 status for orphan check — unknown if pm2 unavailable
-PM2_STATUS=$(pm2 jlist 2>/dev/null | python3 -c "
-import json,sys
-try:
-    procs=json.load(sys.stdin)
-    agent='$AGENT'
-    print('online' if any(p.get('name')==agent and p.get('pm2_env',{}).get('status')=='online' for p in procs) else 'stopped')
-except:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
+# Agents are Claude sessions spawned by the daemon, never pm2 apps.
+# cortextos status is the authoritative running-state source.
+RUNNING_STATUS=$(cortextos status 2>/dev/null | awk -v a="$AGENT" '$1==a{print $2}')
+[ -z "$RUNNING_STATUS" ] && RUNNING_STATUS="unknown"
 
-python3 - "$CRONS" "$HEARTBEAT" "$PM2_STATUS" "$AGENT" << 'PYEOF'
+python3 - "$CRONS" "$HEARTBEAT" "$RUNNING_STATUS" "$AGENT" << 'PYEOF'
 import sys, json, re
 from datetime import datetime, timezone, timedelta
 
@@ -122,7 +117,7 @@ def parse_interval(sched):
     return None, None
 
 
-crons_path, hb_path, pm2_status, agent_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+crons_path, hb_path, running_status, agent_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 crons = json.load(open(crons_path)).get("crons", [])
 now = datetime.now(timezone.utc)
 missed = []
@@ -170,18 +165,22 @@ for c in crons:
         missed.append((c["name"], sched, label,
                        f"last dispatched {behind_str} ago (threshold {threshold_str})"))
 
-# Registry-orphan check: fresh heartbeat + not running = cron dispatches silently drop
+# Registry-orphan check: fresh heartbeat + not in daemon registry = crons dispatch to /dev/null.
+# Agents are Claude sessions — running_status comes from `cortextos status`, not pm2.
 orphan_msg = None
 try:
     hb = json.load(open(hb_path))
-    hb_ts = datetime.fromisoformat(hb["timestamp"].replace("Z", "+00:00"))
+    hb_ts = datetime.fromisoformat(hb["last_heartbeat"].replace("Z", "+00:00"))
     hb_age = (now - hb_ts).total_seconds()
-    if pm2_status != "online" and hb_age < 1200:  # 20 min
+    if running_status != "running" and hb_age < 1200:  # 20 min
         age_m = int(hb_age // 60)
-        orphan_msg = (f"ORPHAN: {agent_name} heartbeat {age_m}m old but pm2={pm2_status!r} "
-                      f"— scheduler can't reach this session, crons dispatch to /dev/null")
-except Exception:
-    pass
+        orphan_msg = (f"ORPHAN: {agent_name} heartbeat {age_m}m old but "
+                      f"daemon status={running_status!r} — session untracked, "
+                      f"cron dispatches silently drop")
+except FileNotFoundError:
+    pass  # no heartbeat file — can't determine orphan state
+except Exception as e:
+    sys.stderr.write(f"orphan-check error: {e}\n")
 
 if missed:
     print(f"F19 GUARD [{agent_name}]: {len(missed)} cron(s) dropped — re-run manually:")
