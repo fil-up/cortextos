@@ -14,9 +14,10 @@
 #   The scheduler wrote that timestamp; whether the agent actually ran the
 #   prompt is a separate question.
 #
-# Orphan check: flag when heartbeat is fresh (<20min) but pm2 status is not
-#   "online" — the session is alive but the daemon scheduler can't reach it,
-#   so all dispatches silently drop (hard-restart orphan pattern).
+# Orphan check: flag when heartbeat is fresh (<20min) but cortextos status
+#   does not show the agent as "running" — the session is alive but the daemon
+#   scheduler can't reach it, so all dispatches silently drop (hard-restart
+#   orphan pattern). Skipped and logged if cortextos CLI is unavailable.
 #
 # Schedule patterns recognised:
 #   Interval strings: 30m, 4h, 7d, etc.
