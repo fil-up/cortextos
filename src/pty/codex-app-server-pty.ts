@@ -442,6 +442,12 @@ export class CodexAppServerPTY {
         if (this._appServerPty !== pty) return;
         this._appServerPty = null;
         this._alive = false;
+        // Same ptmx-leak guard as AgentPTY (2026-08-07 incident): force
+        // node-pty's stream cleanup so the master fd is released on exit.
+        setImmediate(() => {
+          try { (pty as any)?._socket?.destroy(); } catch { /* already closed */ }
+          try { (pty as any)?._writeStream?.dispose(); } catch { /* nothing queued */ }
+        });
         this.rejectTurnCompletion(new Error('Codex app-server exited'));
         this._onExitHandler?.(exitCode, signal);
       });
