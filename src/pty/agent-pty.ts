@@ -159,9 +159,19 @@ export class AgentPTY {
     });
 
     // Set up exit handler
+    const spawnedPty = this.pty;
     this.pty.onExit(({ exitCode, signal }) => {
       this._alive = false;
       this.pty = null;
+      // 2026-08-07 incident: exited sessions leaked their ptmx master fd (and
+      // the native kqueue watcher) until the daemon held all of
+      // kern.tty.ptmx_max (511) and no PTY could spawn machine-wide. Force
+      // node-pty's stream cleanup here; both calls are no-ops when node-pty
+      // already cleaned up on its own.
+      setImmediate(() => {
+        try { (spawnedPty as any)?._socket?.destroy(); } catch { /* already closed */ }
+        try { (spawnedPty as any)?._writeStream?.dispose(); } catch { /* nothing queued */ }
+      });
       if (this.onExitHandler) {
         this.onExitHandler(exitCode, signal);
       }

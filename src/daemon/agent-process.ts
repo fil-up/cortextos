@@ -215,6 +215,15 @@ export class AgentProcess {
       this.log(`Failed to start: ${err}`);
       this.status = 'crashed';
       this.notifyStatusChange();
+      // 2026-08-07 incident: a spawn failure (PTY pool exhausted) stranded
+      // every agent in 'crashed' with no retry path — the fleet stayed dead
+      // for 4 days until a human noticed. Retry while enabled; each failed
+      // start() re-arms exactly one timer, so this cannot stack.
+      setTimeout(() => {
+        if (this.status === 'crashed' && this.isEnabled() && !this.pty?.isAlive?.()) {
+          this.start().catch(() => { /* start() logs its own failures */ });
+        }
+      }, 60_000).unref();
     }
   }
 
