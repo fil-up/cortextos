@@ -38,7 +38,7 @@ MEMEOF
 
 ### Mid-work inline note (write immediately when something important happens)
 ```bash
-echo "NOTE $(date -u +%H:%M UTC): <key decision / discovery / user preference / non-obvious thing>" >> "memory/$TODAY.md"
+echo "NOTE $(date -u +%H:%MZ): <key decision / discovery / user preference / non-obvious thing>" >> "memory/$TODAY.md"
 ```
 Don't wait for the heartbeat. Use for: significant decisions, user preferences learned, non-obvious situations, anything you would want the next session to know. One line.
 
