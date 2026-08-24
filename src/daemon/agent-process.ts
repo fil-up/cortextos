@@ -212,8 +212,8 @@ export class AgentProcess {
       this.log(`Running (pid: ${this.pty.getPid()})`);
 
       // Issue #392: codex-app-server does not reliably execute the inline
-      // "Send a Telegram message saying you are back online" instruction the
-      // way claude-code does, so fire the back-online ping directly from the
+      // back-online instruction (now GATE_INSTRUCTION, above) the way
+      // claude-code does, so fire the back-online ping directly from the
       // daemon for that runtime. Skipped on handoff restart — the agent
       // sends its own contextual "back — ..." reply in that case.
       this.maybeSendCodexBootNotification();
