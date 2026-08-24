@@ -16,6 +16,21 @@ import { resolvePaths } from '../utils/paths.js';
 type LogFn = (msg: string) => void;
 
 /**
+ * Boot / restart prompts used to end with a bare "send a Telegram message to
+ * the user saying you are back online", which fired on every ~2h rollover
+ * regardless of whether anything had changed. Measured on one agent
+ * 2026-08-24: 8 of 8 outbound Telegrams that day were boot messages, 6 of 6
+ * restarts sent one, 5 of the 6 reported nothing new.
+ *
+ * Deferring to AGENTS.md keeps the decision next to the agent's own state.
+ * The trailing clause is deliberate: agents whose AGENTS.md has no gate keep
+ * today's behaviour byte for byte, so this needs no per-agent coordination.
+ */
+const GATE_INSTRUCTION =
+  'Then follow AGENTS.md step 14 to decide whether a back-online Telegram is ' +
+  'warranted; if your AGENTS.md has no such gate, send one.';
+
+/**
  * Manages a single agent's lifecycle.
  * Replaces agent-wrapper.sh for one agent.
  */
@@ -864,6 +879,7 @@ export class AgentProcess {
     // that accumulates context faster than the rollover window never resumes
     // into a compaction loop.
     if (this.config.hard_restart_on_rollover) {
+      this.log('hard_restart_on_rollover set — starting fresh');
       return false;
     }
 
@@ -877,6 +893,13 @@ export class AgentProcess {
     // Check for force-fresh marker (all runtimes honor it).
     const forceFreshPath = join(this.env.ctxRoot, 'state', this.name, '.force-fresh');
     if (existsSync(forceFreshPath)) {
+      // Log BEFORE unlinking. The marker is written by a different process
+      // (`cortextos bus hard-restart`) and consumed silently here, so without
+      // this line a force-fresh start is indistinguishable in every log from a
+      // genuine cold boot — the daemon log shows only "Starting in fresh mode".
+      let reason = '';
+      try { reason = readFileSync(forceFreshPath, 'utf-8').trim(); } catch { /* ignore */ }
+      this.log(`.force-fresh marker present${reason ? ` (${reason})` : ''} — starting fresh`);
       try {
         const { unlinkSync } = require('fs');
         unlinkSync(forceFreshPath);
@@ -954,9 +977,16 @@ export class AgentProcess {
     const handoffUxOverride = isHandoffRestart
       ? ' HANDOFF UX: This is a context handoff restart — your memory is intact via the handoff doc. CRITICAL: After reading the handoff document, your VERY FIRST tool call MUST be a Bash call running: cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID \'back — [what you were just working on]\' — replace the brackets with one brief plain-English sentence about your current state. Do this BEFORE running heartbeat, BEFORE any other tool call. No cron IDs, no status report, no cold-boot phrasing. Do NOT send "Booting up... one moment" (skip AGENTS.md step 1 entirely).'
       : '';
+    // 'fresh' mode is NOT a synonym for 'cold boot'. shouldContinue() returns
+    // false on four routes: a genuine cold boot, the .force-fresh marker
+    // (written by `cortextos bus hard-restart`, src/bus/system.ts:83), the
+    // image-poison auto-recovery at armForceFresh(), and the dormant
+    // hard_restart_on_rollover config. Three of those four are routine or
+    // automatic and carry no news, so this cannot be an unconditional order.
+    // Defer to the agent's own gate, defaulting to send for agents that have none.
     const onlineMessage = isHandoffRestart
       ? ''
-      : ' Send a Telegram message to the user saying you are back online.';
+      : ` ${GATE_INSTRUCTION}`;
     return `You are starting a new session. Current UTC time: ${nowUtc}. Read AGENTS.md and all bootstrap files listed there. External crons are auto-loaded by the daemon — do NOT call CronCreate or CronList for cron restoration.${reminderBlock}${deliverablesBlock}${handoffBlock}${handoffUxOverride}${onlineMessage}${onboardingAppend}`;
   }
 
@@ -966,7 +996,7 @@ export class AgentProcess {
     const deliverablesBlock = this.buildDeliverablesBlock();
     // Session refresh (--continue) is never a handoff restart.
     this.lastSpawnWasHandoff = false;
-    return `SESSION CONTINUATION: Your CLI process was restarted with --continue to reload configs. Current UTC time: ${nowUtc}. Your full conversation history is preserved. Re-read AGENTS.md and ALL bootstrap files listed there. External crons are auto-loaded by the daemon — do NOT call CronCreate or CronList for cron restoration.${reminderBlock}${deliverablesBlock} Check inbox. Resume normal operations. After checking inbox, send a Telegram message to the user saying you are back online.`;
+    return `SESSION CONTINUATION: Your CLI process was restarted with --continue to reload configs. Current UTC time: ${nowUtc}. Your full conversation history is preserved. Re-read AGENTS.md and ALL bootstrap files listed there. External crons are auto-loaded by the daemon — do NOT call CronCreate or CronList for cron restoration.${reminderBlock}${deliverablesBlock} Check inbox. Resume normal operations. ${GATE_INSTRUCTION}`;
   }
 
   /**
