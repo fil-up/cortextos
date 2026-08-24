@@ -521,15 +521,26 @@ export class AgentManager {
     if (telegramApi && chatId) {
       const tgApi = telegramApi;
       const tgChatId = chatId;
+      // These sends go straight out through TelegramAPI, bypassing
+      // `bus send-telegram` — the only writer of outbound-messages.jsonl. Without
+      // the log call, a crash notice Phil actually received leaves no trace, and
+      // an audit of that log reads "nothing was sent" for a message that was.
+      const ctxRoot = this.ctxRoot;
+      const notify = (text: string) => {
+        tgApi
+          .sendMessage(tgChatId, text)
+          .then((r) => logOutboundMessage(ctxRoot, name, tgChatId, text, r?.result?.message_id ?? 0))
+          .catch(() => {});
+      };
       let prevStatus: string | null = null;
       agentProcess.onStatusChanged((status) => {
         if (status.status === 'crashed') {
           const crashNum = status.crashCount ?? '?';
-          tgApi.sendMessage(tgChatId, `Agent ${name} crashed (crash #${crashNum}) — auto-restarting`).catch(() => {});
+          notify(`Agent ${name} crashed (crash #${crashNum}) — auto-restarting`);
         } else if (status.status === 'halted') {
-          tgApi.sendMessage(tgChatId, `Agent ${name} HALTED — exceeded crash limit. Restart manually with: cortextos start ${name}`).catch(() => {});
+          notify(`Agent ${name} HALTED — exceeded crash limit. Restart manually with: cortextos start ${name}`);
         } else if (status.status === 'running' && prevStatus === 'crashed') {
-          tgApi.sendMessage(tgChatId, `Agent ${name} recovered and is back online`).catch(() => {});
+          notify(`Agent ${name} recovered and is back online`);
         }
         prevStatus = status.status;
       });
